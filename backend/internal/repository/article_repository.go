@@ -12,6 +12,7 @@ import (
 type ArticleRepository interface {
 	UpsertArticle(ctx context.Context, article *model.Article) error
 	ListArticles(ctx context.Context, limit int) ([]model.Article, error)
+	GetArticleByURL(ctx context.Context, url string) (*model.Article, error)
 }
 
 // supabaseRepository はインターフェースの実体
@@ -51,4 +52,23 @@ func (r *supabaseRepository) ListArticles(ctx context.Context, limit int) ([]mod
 		ExecuteTo(&articles)
 
 	return articles, err
+}
+
+// GetArticleByURL は URL に紐づく記事を1件取得します。見つからなければ (nil, nil) を返します。
+func (r *supabaseRepository) GetArticleByURL(ctx context.Context, url string) (*model.Article, error) {
+	var articles []model.Article
+
+	_, err := r.client.From("articles").
+		Select("*", "exact", false).
+		Eq("url", url).
+		Limit(1, "").
+		ExecuteTo(&articles)
+
+	if err != nil {
+		return nil, err
+	}
+	if len(articles) == 0 {
+		return nil, nil
+	}
+	return &articles[0], nil
 }

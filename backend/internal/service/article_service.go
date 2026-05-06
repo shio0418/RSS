@@ -75,15 +75,35 @@ func (s *articleService) FetchOneUrl(ctx context.Context, url string) error {
 		if item.PublishedParsed != nil {
 			pubDate = *item.PublishedParsed
 		}
-		content, err := s.scrapeZennContent(item.Link)
+		// 既にDBに要約が保存されている場合は Gemini を呼ばずにスキップする
+		var content string
+		var summary string
+
+		existing, err := s.repo.GetArticleByURL(ctx, item.Link)
 		if err != nil {
-			return err
+			log.Printf("GetArticleByURL error: %v", err)
 		}
 
-		summary, err := s.Summarize(ctx, content)
-		if err != nil {
-			log.Printf("Summarize error: %v", err)
-			return err
+		if existing != nil && existing.Summary != nil && *existing.Summary != "" {
+			// 既存レコードの summary を使い、content は既存の content を流用
+			summary = *existing.Summary
+			content = existing.Content
+		} else {
+			content, err = s.scrapeZennContent(item.Link)
+			if err != nil {
+				log.Printf("Error scraping %s: %v", item.Link, err)
+				// 続行して他の記事を試す
+				continue
+			}
+
+			summary, err = s.Summarize(ctx, content)
+			if err != nil {
+				log.Printf("Summarize error: %v", err)
+				if summary == "" {
+					summary = fallbackSummary(content)
+				}
+				// failure is non-fatal — we still save the article with fallback
+			}
 		}
 		article := &model.Article{
 			Title:       item.Title,

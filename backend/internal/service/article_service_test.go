@@ -23,6 +23,10 @@ func (m *mockRepo) ListArticles(ctx context.Context, limit int) ([]model.Article
 	return nil, nil
 }
 
+func (m *mockRepo) GetArticleByURL(ctx context.Context, url string) (*model.Article, error) {
+	return nil, nil
+}
+
 func TestFetchOneUrl(t *testing.T) {
 	// httptest で簡易 feed を返すサーバを立てる
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
