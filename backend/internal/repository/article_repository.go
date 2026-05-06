@@ -24,21 +24,25 @@ func NewArticleRepository(client *supabase.Client) ArticleRepository {
 	}
 }
 
-// UpsertArticle は記事を保存、すでにあれば更新（重複防止）
+// UpsertArticle は記事を保存、すでにあれば更新
 func (r *supabaseRepository) UpsertArticle(ctx context.Context, a *model.Article) error {
-	// Supabaseのクライアントを使って、articlesテーブルにデータを投げる
-	// "on_conflict" を使うことで、URLの重複を検知して更新(Upsert)にする
-	_, _, err := r.client.From("articles").Upsert(a, "url", "exact").Execute()
+	// Upsert(json, onConflict, resolution, count)
+	// countは通常空文字 "" でOKです
+	_, _, err := r.client.From("articles").Upsert(a, "url", "exact", "").Execute()
 	return err
 }
 
 // ListArticles は最新の記事を一覧取得
 func (r *supabaseRepository) ListArticles(ctx context.Context, limit int) ([]model.Article, error) {
 	var articles []model.Article
-	err := r.client.From("articles").
-		Select("*").
-		Order("published_at", &supabase.OrderOptions{Ascending: false}).
-		Limit(limit).
+	
+	// Select(columns, head, count) 
+	// Order(column, ascending, nullsFirst, foreignTable)
+	// Limit(count, foreignTable)
+	_, err := r.client.From("articles").
+		Select("*", "exact", false). 
+		Order("published_at", false, false, ""). 
+		Limit(limit, "").
 		ExecuteTo(&articles)
 	
 	return articles, err
