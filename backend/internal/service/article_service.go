@@ -2,14 +2,18 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/mmcdole/gofeed"
 	"github.com/shio0418/RSS/internal/model"
 	"github.com/shio0418/RSS/internal/repository"
-	"github.com/mmcdole/gofeed"
-	"sync"
 )
 
 type ArticleService interface {
-    FetchAndSummarize(ctx context.Context, urls []string) error
+	FetchAndSummarize(ctx context.Context, urls []string) error
+	ListArticles(ctx context.Context, limit int) ([]model.Article, error)
 }
 
 type articleService struct {
@@ -18,7 +22,7 @@ type articleService struct {
 
 // コンストラクタ
 func NewArticleService(repo repository.ArticleRepository) ArticleService {
-	return &articleService {
+	return &articleService{
 		repo: repo,
 	}
 }
@@ -33,7 +37,9 @@ func (s *articleService) FetchAndSummarize(ctx context.Context, urls []string) e
 		go func() {
 			defer wg.Done()
 			for url := range jobs {
-				_ = s.FetchOneUrl(ctx, url)
+				if err := s.FetchOneUrl(ctx, url); err != nil {
+					fmt.Printf("Error fetching %s: %v\n", url, err)
+				}
 			}
 		}()
 	}
@@ -55,17 +61,29 @@ func (s *articleService) FetchOneUrl(ctx context.Context, url string) error {
 	}
 
 	for _, item := range feed.Items {
-		article := &model.Article {
-			Title: item.Title,
-			URL: item.Link,
-			SourceName: feed.Title,
-			PublishedAt: *item.PublishedParsed,
+		fmt.Printf("Attempting to save: %s | URL: %s\n", item.Title, item.Link)
+		pubDate := time.Now()
+		if item.PublishedParsed != nil {
+			pubDate = *item.PublishedParsed
+		}
+		article := &model.Article{
+			Title:       item.Title,
+			URL:         item.Link,
+			SourceName:  feed.Title,
+			PublishedAt: pubDate,
 		}
 
-		err := s.repo.UpsertArticle(ctx, article)
-		if err != nil {
-			return err
+		// ログを出して、1件のUpsertエラーで処理を中断しない
+		fmt.Printf("Upserting article: %s (%s)\n", article.Title, article.URL)
+		if err := s.repo.UpsertArticle(ctx, article); err != nil {
+			fmt.Printf("Upsert error for %s: %v\n", article.URL, err)
+			// 続行して他の記事を試す
+			continue
 		}
 	}
 	return nil
+}
+
+func (s *articleService) ListArticles(ctx context.Context, limit int) ([]model.Article, error) {
+	return s.repo.ListArticles(ctx, limit)
 }

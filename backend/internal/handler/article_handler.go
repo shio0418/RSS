@@ -24,5 +24,24 @@ func (h *ArticleHandler) FetchArticles(c echo.Context) error {
 		return c.JSON(500, map[string]string{"error": err.Error()})
 	}
 
-	return c.JSON(200, map[string]string{"message": "success"})
+	// Fetchした直後に最新記事一覧を返す
+	articles, err := h.svc.ListArticles(ctx, 100)
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(200, articles)
+}
+
+// GET /articles
+func (h *ArticleHandler) ListArticles(c echo.Context) error {
+    ctx := c.Request().Context()
+    
+    // 最新の20件くらいを取得してみる
+    articles, err := h.svc.ListArticles(ctx, 20) // svcにもListが必要ですね
+    if err != nil {
+        return c.JSON(500, map[string]string{"error": err.Error()})
+    }
+    
+    return c.JSON(200, articles)
 }

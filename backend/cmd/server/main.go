@@ -20,7 +20,11 @@ func main() {
 	}
 
 	supabaseURL := os.Getenv("SUPABASE_URL")
-	supabaseKey := os.Getenv("SUPABASE_ANON_KEY")
+	// サーバー側は service role キーを優先して使う。なければ anon をフォールバック。
+	supabaseKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
+	if supabaseKey == "" {
+		supabaseKey = os.Getenv("SUPABASE_ANON_KEY")
+	}
 
 	supabaseClient, err := supabase.NewClient(supabaseURL, supabaseKey, nil)
 	if err != nil {
@@ -33,7 +37,9 @@ func main() {
 	hdl := handler.NewArticleHandler(svc)
 
 	e := echo.New()
+
 	e.POST("/fetch", hdl.FetchArticles)
+    e.GET("/articles", hdl.ListArticles)
 
 	e.Logger.Fatal(e.Start(":8080"))
 }
