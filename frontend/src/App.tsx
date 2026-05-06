@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 
 type Article = {
   url: string
@@ -38,7 +39,15 @@ function App() {
   }, [])
 
   return (
-    <div style={{ padding: '20px' }}>
+    <div style={{ 
+      display: 'flex', 
+      flexDirection: 'column', 
+      alignItems: 'flex-start', // これが「左寄せ」の鍵
+      justifyContent: 'flex-start', 
+      minHeight: '100vh',
+      padding: '40px',          // 少し余白を設けるのが「美しく見せる」コツ
+      textAlign: 'left'
+    }}>
       <h1>RSS Reader</h1>
       <button type="button" onClick={() => void fetchAndRefresh()} disabled={loading}>
         {loading ? '更新中...' : '記事を取得して要約'}
@@ -53,7 +62,7 @@ function App() {
               ({article.source_name})
             </span>
             <div style={{ marginTop: '6px', color: '#333' }}>
-              {article.summary ?? '要約なし'}
+              <ReactMarkdown>{article.summary ?? '要約なし'}</ReactMarkdown>
             </div>
           </li>
         ))}
