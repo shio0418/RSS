@@ -3,7 +3,7 @@ package main
 
 import (
     "fmt"
-    "github.com/shio0418/RSS/internal/repository" 
+    //"github.com/shio0418/RSS/internal/repository" 
 )
 
 func main() {
