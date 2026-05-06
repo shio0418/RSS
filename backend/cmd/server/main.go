@@ -2,11 +2,44 @@
 package main
 
 import (
-    "fmt"
-    //"github.com/shio0418/RSS/internal/repository" 
+	"log"
+	"os"
+
+	"github.com/joho/godotenv"
+	"github.com/labstack/echo/v4"
+	"github.com/shio0418/RSS/internal/handler"
+	"github.com/shio0418/RSS/internal/repository"
+	"github.com/shio0418/RSS/internal/service"
+	"github.com/supabase-community/supabase-go"
 )
 
 func main() {
-    fmt.Println("ビルド成功！これからSupabaseとの接続確認を始めます。")
-    // ここに client := supabase.CreateClient(...) などを書いていく
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal(".envの読み込みに失敗しました")
+	}
+
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	// サーバー側は service role キーを優先して使う。なければ anon をフォールバック。
+	supabaseKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
+	if supabaseKey == "" {
+		supabaseKey = os.Getenv("SUPABASE_ANON_KEY")
+	}
+
+	supabaseClient, err := supabase.NewClient(supabaseURL, supabaseKey, nil)
+	if err != nil {
+		log.Fatalf("Supabaseの初期化に失敗しました: %v", err)
+	}
+	repo := repository.NewArticleRepository(supabaseClient)
+
+	svc := service.NewArticleService(repo)
+
+	hdl := handler.NewArticleHandler(svc)
+
+	e := echo.New()
+
+	e.POST("/fetch", hdl.FetchArticles)
+    e.GET("/articles", hdl.ListArticles)
+
+	e.Logger.Fatal(e.Start(":8080"))
 }
