@@ -15,7 +15,7 @@ func NewArticleHandler(svc service.ArticleService) *ArticleHandler {
 
 func (h *ArticleHandler) FetchArticles(c echo.Context) error {
 	urls := []string{
-		"https://news.yahoo.co.jp/rss/topics/top-picks.xml",
+		"https://zenn.dev/feed",
 	}
 
 	ctx := c.Request().Context()

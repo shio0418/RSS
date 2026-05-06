@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/mmcdole/gofeed"
 	"github.com/shio0418/RSS/internal/model"
 	"github.com/shio0418/RSS/internal/repository"
@@ -66,11 +69,13 @@ func (s *articleService) FetchOneUrl(ctx context.Context, url string) error {
 		if item.PublishedParsed != nil {
 			pubDate = *item.PublishedParsed
 		}
+		content, _ := s.scrapeZennContent(item.Link)
 		article := &model.Article{
 			Title:       item.Title,
 			URL:         item.Link,
 			SourceName:  feed.Title,
 			PublishedAt: pubDate,
+			Content: content,
 		}
 
 		// ログを出して、1件のUpsertエラーで処理を中断しない
@@ -86,4 +91,32 @@ func (s *articleService) FetchOneUrl(ctx context.Context, url string) error {
 
 func (s *articleService) ListArticles(ctx context.Context, limit int) ([]model.Article, error) {
 	return s.repo.ListArticles(ctx, limit)
+}
+
+func (s *articleService) scrapeZennContent(url string) (string, error) {
+	res, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(res.Body)
+	if err != nil {
+		return "", err
+	}
+
+	// 1. まずは本文の器（znc）を特定する
+	selection := doc.Find(".znc")
+
+	// 2. 不要な「画像説明」や「埋め込みカード」を削除してノイズを減らす
+	selection.Find(".TopicList_item___M3DS").Remove() // トピックタグ
+	selection.Find(".embed-block").Remove()           // 埋め込みカード
+	selection.Find("img").Remove()                    // 画像本体
+
+	// 3. テキストを抽出
+	// Zennの場合、コードブロック (<pre>) も .znc の中にあるので、
+	// .Text() を使うとコードの中身も文字列として取得できます。
+	content := selection.Text()
+
+	return strings.TrimSpace(content), nil
 }

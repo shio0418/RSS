@@ -10,4 +10,5 @@ type Article struct {
 	Summary     *string   `json:"summary" db:"summary"` // Nullableなのでポインタ
 	PublishedAt time.Time `json:"published_at" db:"published_at"`
 	CreatedAt   time.Time `json:"created_at,omitempty" db:"created_at"`
+    Content    string    `json:"content" db:"content"`
 }

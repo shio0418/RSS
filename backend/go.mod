@@ -3,6 +3,7 @@ module github.com/shio0418/RSS
 go 1.26.1
 
 require (
+	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.15.2
 	github.com/mmcdole/gofeed v1.3.0
@@ -13,8 +14,7 @@ require (
 require golang.org/x/time v0.15.0 // indirect
 
 require (
-	github.com/PuerkitoBio/goquery v1.8.0 // indirect
-	github.com/andybalholm/cascadia v1.3.1 // indirect
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
