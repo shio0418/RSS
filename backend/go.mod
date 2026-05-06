@@ -3,6 +3,7 @@ module github.com/shio0418/RSS
 go 1.26.1
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.15.2
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/supabase-community/postgrest-go v0.0.11
