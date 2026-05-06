@@ -7,6 +7,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/shio0418/RSS/internal/handler"
 	"github.com/shio0418/RSS/internal/repository"
 	"github.com/shio0418/RSS/internal/service"
@@ -38,8 +39,13 @@ func main() {
 
 	e := echo.New()
 
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"http://localhost:3000", "http://localhost:5173"}, // Reactのポート
+		AllowMethods: []string{echo.GET, echo.POST},
+	}))
+
 	e.POST("/fetch", hdl.FetchArticles)
-    e.GET("/articles", hdl.ListArticles)
+	e.GET("/articles", hdl.ListArticles)
 
 	e.Logger.Fatal(e.Start(":8080"))
 }

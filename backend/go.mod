@@ -10,6 +10,8 @@ require (
 	github.com/supabase-community/supabase-go v0.0.4
 )
 
+require golang.org/x/time v0.15.0 // indirect
+
 require (
 	github.com/PuerkitoBio/goquery v1.8.0 // indirect
 	github.com/andybalholm/cascadia v1.3.1 // indirect
