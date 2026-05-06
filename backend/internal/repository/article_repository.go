@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"github.com/shio0418/RSS/internal/model"
+	"github.com/supabase-community/postgrest-go"
 	"github.com/supabase-community/supabase-go"
 )
 
@@ -41,7 +42,10 @@ func (r *supabaseRepository) ListArticles(ctx context.Context, limit int) ([]mod
 	// Limit(count, foreignTable)
 	_, err := r.client.From("articles").
 		Select("*", "exact", false). 
-		Order("published_at", false, false, ""). 
+		Order("published_at", &postgrest.OrderOpts{
+					Ascending:  false,
+					NullsFirst: false,
+		}).
 		Limit(limit, "").
 		ExecuteTo(&articles)
 	
