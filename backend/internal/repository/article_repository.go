@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+
 	"github.com/shio0418/RSS/internal/model"
 	"github.com/supabase-community/postgrest-go"
 	"github.com/supabase-community/supabase-go"
@@ -17,6 +18,7 @@ type ArticleRepository interface {
 type supabaseRepository struct {
 	client *supabase.Client
 }
+
 // NewArticleRepository はレポジトリのコンストラクタ
 func NewArticleRepository(client *supabase.Client) ArticleRepository {
 	return &supabaseRepository{
@@ -35,18 +37,18 @@ func (r *supabaseRepository) UpsertArticle(ctx context.Context, a *model.Article
 // ListArticles は最新の記事を一覧取得
 func (r *supabaseRepository) ListArticles(ctx context.Context, limit int) ([]model.Article, error) {
 	var articles []model.Article
-	
-	// Select(columns, head, count) 
+
+	// Select(columns, head, count)
 	// Order(column, ascending, nullsFirst, foreignTable)
 	// Limit(count, foreignTable)
 	_, err := r.client.From("articles").
-		Select("*", "exact", false). 
+		Select("*", "exact", false).
 		Order("published_at", &postgrest.OrderOpts{
-					Ascending:  false,
-					NullsFirst: false,
+			Ascending:  false,
+			NullsFirst: false,
 		}).
 		Limit(limit, "").
 		ExecuteTo(&articles)
-	
+
 	return articles, err
 }
