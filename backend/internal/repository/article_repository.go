@@ -17,7 +17,6 @@ type ArticleRepository interface {
 type supabaseRepository struct {
 	client *supabase.Client
 }
-
 // NewArticleRepository はレポジトリのコンストラクタ
 func NewArticleRepository(client *supabase.Client) ArticleRepository {
 	return &supabaseRepository{
