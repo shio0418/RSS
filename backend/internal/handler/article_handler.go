@@ -15,7 +15,7 @@ func NewArticleHandler(svc service.ArticleService) *ArticleHandler {
 
 func (h *ArticleHandler) FetchArticles(c echo.Context) error {
 	urls := []string{
-		"https://news.yahoo.co.jp/rss/topics/top-picks.xml",
+		"https://zenn.dev/feed",
 	}
 
 	ctx := c.Request().Context()
@@ -38,7 +38,7 @@ func (h *ArticleHandler) ListArticles(c echo.Context) error {
     ctx := c.Request().Context()
     
     // 最新の20件くらいを取得してみる
-    articles, err := h.svc.ListArticles(ctx, 20) // svcにもListが必要ですね
+    articles, err := h.svc.ListArticles(ctx, 20) 
     if err != nil {
         return c.JSON(500, map[string]string{"error": err.Error()})
     }
