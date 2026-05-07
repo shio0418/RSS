@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 
 type ArticleCardProps = {
   title: string
+  url: string
   summary: string
   tags: string[]
   publishedLabel: string
@@ -13,6 +15,7 @@ type ArticleCardProps = {
 
 const ArticleCard = ({
   title,
+  url,
   summary,
   tags,
   publishedLabel,
@@ -21,6 +24,7 @@ const ArticleCard = ({
   onLike,
   onDislike,
 }: ArticleCardProps) => {
+  const [expanded, setExpanded] = useState(false)
   return (
     <article className="group w-full h-fit bg-white rounded-[24px] border border-gray-100 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col p-6 sm:p-8 gap-6">
       <div
@@ -31,9 +35,14 @@ const ArticleCard = ({
       </div>
 
       <div className="flex flex-col gap-3">
-        <h2 className="text-xl font-bold text-blue-600 leading-tight line-clamp-2">{title}</h2>
+        <a href={url} target="_blank" rel="noopener noreferrer" className="group/link">
+          <h2 className="text-xl font-bold text-blue-600 leading-tight line-clamp-2 hover:text-blue-800 hover:underline transition-colors">{title}</h2>
+        </a>
         {sourceName ? <p className="text-xs text-gray-400">{sourceName}</p> : null}
-        <div className="prose prose-sm max-w-none text-sm text-gray-500 leading-relaxed line-clamp-3 prose-p:m-0 prose-ul:m-0 prose-li:m-0">
+        <div 
+          onClick={() => setExpanded(!expanded)}
+          className={`prose prose-sm max-w-none text-sm text-gray-500 leading-relaxed cursor-pointer transition-all duration-300 prose-p:m-0 prose-ul:m-0 prose-li:m-0 ${expanded ? '' : 'line-clamp-3'}`}
+        >
           <ReactMarkdown>{summary}</ReactMarkdown>
         </div>
       </div>

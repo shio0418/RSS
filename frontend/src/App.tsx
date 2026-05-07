@@ -88,6 +88,7 @@ function App() {
                 <ArticleCard
                   key={article.url}
                   title={article.title}
+                  url={article.url}
                   summary={article.summary || '要約がありません'}
                   tags={parsedTags}
                   sourceName={article.source_name}
