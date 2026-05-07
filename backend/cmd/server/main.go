@@ -46,6 +46,7 @@ func main() {
 
 	e.POST("/fetch", hdl.FetchArticles)
 	e.GET("/articles", hdl.ListArticles)
+	e.GET("/articles/recommended", hdl.GetRecommendations)
 
 	e.Logger.Fatal(e.Start(":8080"))
 }

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,7 @@ var bulletNumberRegex = regexp.MustCompile(`^\d+[.)]`)
 type ArticleService interface {
 	FetchAndSummarize(ctx context.Context, urls []string) error
 	ListArticles(ctx context.Context, limit int) ([]model.Article, error)
+	GetRecommendations(ctx context.Context, articleID int64, limit int) ([]model.Article, error)
 }
 
 type articleService struct {
@@ -166,6 +169,95 @@ func (s *articleService) FetchOneUrl(ctx context.Context, url string) error {
 
 func (s *articleService) ListArticles(ctx context.Context, limit int) ([]model.Article, error) {
 	return s.repo.ListArticles(ctx, limit)
+}
+
+// コサイン類似度を計算
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+
+	var dotProduct float64
+	var magnitudeA float64
+	var magnitudeB float64
+
+	for i := range a {
+		dotProduct += a[i] * b[i]
+		magnitudeA += a[i] * a[i]
+		magnitudeB += b[i] * b[i]
+	}
+
+	magnitudeA = math.Sqrt(magnitudeA)
+	magnitudeB = math.Sqrt(magnitudeB)
+
+	if magnitudeA == 0 || magnitudeB == 0 {
+		return 0
+	}
+
+	return dotProduct / (magnitudeA * magnitudeB)
+}
+
+// GetRecommendations は、指定された記事に基づいて推薦記事を取得
+func (s *articleService) GetRecommendations(ctx context.Context, articleID int64, limit int) ([]model.Article, error) {
+	// 指定された記事を取得
+	articles, err := s.repo.ListArticles(ctx, 1000) // 全記事を取得してメモリで処理
+	if err != nil {
+		return nil, err
+	}
+
+	// 指定されたarticleIDの記事を見つける
+	var targetArticle *model.Article
+	var otherArticles []model.Article
+
+	for i, a := range articles {
+		if a.ID == articleID {
+			targetArticle = &articles[i]
+		} else {
+			otherArticles = append(otherArticles, a)
+		}
+	}
+
+	if targetArticle == nil {
+		return nil, fmt.Errorf("article not found: %d", articleID)
+	}
+
+	if len(targetArticle.Embedding) == 0 {
+		// embeddingがない場合は空を返す
+		return []model.Article{}, nil
+	}
+
+	// 類似度を計算
+	type similarity struct {
+		article model.Article
+		score   float64
+	}
+
+	var similarities []similarity
+
+	for _, article := range otherArticles {
+		if len(article.Embedding) == 0 {
+			continue
+		}
+
+		score := cosineSimilarity(targetArticle.Embedding, article.Embedding)
+		similarities = append(similarities, similarity{article, score})
+	}
+
+	// スコアでソート（降順）
+	sort.Slice(similarities, func(i, j int) bool {
+		return similarities[i].score > similarities[j].score
+	})
+
+	// 上位 limit 件を返す
+	result := make([]model.Article, 0, limit)
+	for i, sim := range similarities {
+		if i >= limit {
+			break
+		}
+		result = append(result, sim.article)
+	}
+
+	return result, nil
 }
 
 // contentをスクレイピング

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"strconv"
+
 	"github.com/labstack/echo/v4"
 	"github.com/shio0418/RSS/internal/service"
 )
@@ -44,4 +46,37 @@ func (h *ArticleHandler) ListArticles(c echo.Context) error {
     }
     
     return c.JSON(200, articles)
+}
+
+// GET /articles/recommended?id=<article_id>&limit=<limit>
+func (h *ArticleHandler) GetRecommendations(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// クエリパラメータから article ID を取得
+	articleIDStr := c.QueryParam("id")
+	if articleIDStr == "" {
+		return c.JSON(400, map[string]string{"error": "missing 'id' query parameter"})
+	}
+
+	articleID, err := strconv.ParseInt(articleIDStr, 10, 64)
+	if err != nil {
+		return c.JSON(400, map[string]string{"error": "invalid 'id' parameter"})
+	}
+
+	// limit パラメータを取得（デフォルト: 10）
+	limitStr := c.QueryParam("limit")
+	limit := 10
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	// 推薦記事を取得
+	recommendations, err := h.svc.GetRecommendations(ctx, articleID, limit)
+	if err != nil {
+		return c.JSON(500, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(200, recommendations)
 }
