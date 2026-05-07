@@ -173,6 +173,51 @@ func TestFetchOneUrl_SkipSummarize(t *testing.T) {
 	}
 }
 
+func TestFetchOneUrl_SkipSummarize_BackfillTagsWhenMissing(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, `<?xml version="1.0"?><rss><channel><title>test</title><item><title>one</title><link>http://example/1</link><pubDate>Mon, 02 Jan 2006 15:04:05 MST</pubDate></item></channel></rss>`)
+	}))
+	defer ts.Close()
+
+	s := "既存の要約"
+	existing := &model.Article{
+		URL:     "http://example/1",
+		Content: "Go and React article",
+		Summary: &s,
+		Tags:    nil,
+	}
+
+	repo := &mockRepo{existing: existing}
+	svc := NewArticleService(repo)
+
+	err := svc.(*articleService).FetchOneUrl(context.Background(), ts.URL)
+	if err != nil {
+		t.Fatalf("Failed: %v", err)
+	}
+
+	if repo.saved == nil {
+		t.Fatalf("UpsertArticle was not called")
+	}
+
+	if repo.saved.Summary == nil || *repo.saved.Summary != "既存の要約" {
+		t.Fatalf("Expected saved summary to be existing summary, got: %#v", repo.saved.Summary)
+	}
+
+	if repo.saved.Tags == nil {
+		t.Fatalf("expected tags to be backfilled")
+	}
+
+	var tags []string
+	if err := json.Unmarshal(*repo.saved.Tags, &tags); err != nil {
+		t.Fatalf("expected backfilled tags to be valid JSON array, got %s (err: %v)", string(*repo.saved.Tags), err)
+	}
+
+	if len(tags) == 0 {
+		t.Fatalf("expected at least one backfilled tag, got empty list")
+	}
+}
+
 func TestNormalizeSummary(t *testing.T) {
 	input := "わかりました。\n- 1つ目のポイント\n- 2つ目のポイント\n- 3つ目のポイント"
 

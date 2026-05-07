@@ -93,6 +93,20 @@ func (s *articleService) FetchOneUrl(ctx context.Context, url string) error {
 			summary = *existing.Summary
 			content = existing.Content
 			tags = existing.Tags
+			if !hasNonEmptyTags(tags) {
+				tagSource := content
+				if strings.TrimSpace(tagSource) == "" {
+					tagSource = summary
+				}
+
+				tags, err = s.GenerateTags(ctx, tagSource)
+				if err != nil {
+					log.Printf("GenerateTags error: %v", err)
+					if !hasNonEmptyTags(tags) {
+						tags = fallbackTags(tagSource)
+					}
+				}
+			}
 		} else {
 			content, err = s.scrapeZennContent(item.Link)
 			if err != nil {
@@ -398,6 +412,19 @@ func tagsToRawMessage(tags []string) *json.RawMessage {
 	}
 	raw := json.RawMessage(b)
 	return &raw
+}
+
+func hasNonEmptyTags(tags *json.RawMessage) bool {
+	if tags == nil {
+		return false
+	}
+
+	var parsed []string
+	if err := json.Unmarshal(*tags, &parsed); err != nil {
+		return strings.TrimSpace(string(*tags)) != ""
+	}
+
+	return len(normalizeTagList(parsed)) > 0
 }
 
 func isQuotaError(err error) bool {
