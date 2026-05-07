@@ -11,6 +11,8 @@ import (
 	"github.com/shio0418/RSS/internal/model"
 )
 
+const testArticleHTML = `<html><body><div class="znc"><p>hello</p><div class="TopicList_item___M3DS">topic</div><div class="embed-block">embed</div><img src="/x.png"/><p>world</p></div></body></html>`
+
 // テスト用の偽物リポジトリ
 type mockRepo struct {
 	// existing を返すようにして、FetchOneUrl の挙動を切り替えられる
@@ -38,7 +40,7 @@ func (m *mockRepo) GetArticleByURL(ctx context.Context, url string) (*model.Arti
 func TestFetchOneUrl(t *testing.T) {
 	contentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		io.WriteString(w, `<html><body><div class="znc"><p>hello</p><div class="TopicList_item___M3DS">topic</div><div class="embed-block">embed</div><img src="/x.png"/><p>world</p></div></body></html>`)
+		io.WriteString(w, testArticleHTML)
 	}))
 	defer contentServer.Close()
 
@@ -73,8 +75,12 @@ func TestFetchOneUrl(t *testing.T) {
 		t.Fatalf("expected saved source %q, got %q", "test", repo.saved.SourceName)
 	}
 
-	if !strings.Contains(repo.saved.Content, "hello") || !strings.Contains(repo.saved.Content, "world") {
-		t.Fatalf("expected content to contain %q and %q, got %q", "hello", "world", repo.saved.Content)
+	if !strings.Contains(repo.saved.Content, "hello") {
+		t.Fatalf("expected content to contain %q, got %q", "hello", repo.saved.Content)
+	}
+
+	if !strings.Contains(repo.saved.Content, "world") {
+		t.Fatalf("expected content to contain %q, got %q", "world", repo.saved.Content)
 	}
 
 	if strings.Contains(repo.saved.Content, "topic") || strings.Contains(repo.saved.Content, "embed") {
