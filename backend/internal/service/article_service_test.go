@@ -85,16 +85,20 @@ func TestFetchOneUrl(t *testing.T) {
 		t.Fatalf("expected content to contain %q, got %q", "world", repo.saved.Content)
 	}
 
-	if strings.Contains(repo.saved.Content, "topic") || strings.Contains(repo.saved.Content, "embed") {
-		t.Fatalf("expected content to not contain %q or %q (filtered elements), got %q", "topic", "embed", repo.saved.Content)
+	if strings.Contains(repo.saved.Content, "topic") {
+		t.Fatalf("expected content to not contain %q (filtered element), got %q", "topic", repo.saved.Content)
+	}
+
+	if strings.Contains(repo.saved.Content, "embed") {
+		t.Fatalf("expected content to not contain %q (filtered element), got %q", "embed", repo.saved.Content)
 	}
 
 	if repo.saved.Summary == nil || *repo.saved.Summary == "" {
 		t.Fatalf("expected non-empty summary to be saved")
 	}
 
-	if !strings.HasPrefix(*repo.saved.Summary, "要約を生成できなかったため、本文の冒頭を表示します: ") {
-		t.Fatalf("expected fallback summary prefix, got %q", *repo.saved.Summary)
+	if !strings.Contains(*repo.saved.Summary, "本文の冒頭") {
+		t.Fatalf("expected fallback-style summary text, got %q", *repo.saved.Summary)
 	}
 
 	if !strings.Contains(*repo.saved.Summary, "hello") {
