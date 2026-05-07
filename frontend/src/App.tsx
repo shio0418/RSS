@@ -8,7 +8,7 @@ type Article = {
   source_name: string
   summary: string | null
   published_at: string
-  tags?: string | null
+  tags?: string | string[] | null
 }
 
 function getRelativeTime(isoDate: string): string {
@@ -26,10 +26,13 @@ function getRelativeTime(isoDate: string): string {
   return date.toLocaleDateString('ja-JP')
 }
 
-function parseTags(tagsJson: string | null | undefined): string[] {
-  if (!tagsJson) return []
+function parseTags(tags: string | string[] | null | undefined): string[] {
+  if (!tags) return []
+  // Already an array from backend
+  if (Array.isArray(tags)) return tags
+  // Try to parse as JSON string
   try {
-    const parsed = JSON.parse(tagsJson)
+    const parsed = JSON.parse(tags)
     return Array.isArray(parsed) ? parsed : []
   } catch {
     return []
@@ -76,18 +79,24 @@ function App() {
 
         {!loading && articles.length > 0 && (
           <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {articles.map((article) => (
-              <ArticleCard
-                key={article.url}
-                title={article.title}
-                summary={article.summary || '要約がありません'}
-                tags={parseTags(article.tags)}
-                sourceName={article.source_name}
-                publishedLabel={getRelativeTime(article.published_at)}
-                onLike={() => console.log('like:', article.id)}
-                onDislike={() => console.log('dislike:', article.id)}
-              />
-            ))}
+            {articles.map((article) => {
+              const parsedTags = parseTags(article.tags)
+              if (article.tags && parsedTags.length === 0) {
+                console.log('Tags parse issue - raw:', article.tags, 'parsed:', parsedTags)
+              }
+              return (
+                <ArticleCard
+                  key={article.url}
+                  title={article.title}
+                  summary={article.summary || '要約がありません'}
+                  tags={parsedTags}
+                  sourceName={article.source_name}
+                  publishedLabel={getRelativeTime(article.published_at)}
+                  onLike={() => console.log('like:', article.id)}
+                  onDislike={() => console.log('dislike:', article.id)}
+                />
+              )
+            })}
           </section>
         )}
       </div>

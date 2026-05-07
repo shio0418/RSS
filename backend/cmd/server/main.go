@@ -40,7 +40,7 @@ func main() {
 	e := echo.New()
 
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"http://localhost:3000", "http://localhost:5173"}, // Reactのポート
+		AllowOrigins: []string{"http://localhost:3000", "http://localhost:5173", "http://localhost:5174"}, // Reactのポート
 		AllowMethods: []string{echo.GET, echo.POST},
 	}))
 
