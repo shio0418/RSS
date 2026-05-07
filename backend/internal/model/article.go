@@ -15,4 +15,5 @@ type Article struct {
 	CreatedAt   time.Time        `json:"created_at,omitempty" db:"created_at"`
 	Content     string           `json:"content" db:"content"`
 	Tags        *json.RawMessage `json:"tags" db:"tags"`
+	Embedding   []float64        `json:"embedding,omitempty" db:"embedding"`
 }

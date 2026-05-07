@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +28,7 @@ var bulletNumberRegex = regexp.MustCompile(`^\d+[.)]`)
 type ArticleService interface {
 	FetchAndSummarize(ctx context.Context, urls []string) error
 	ListArticles(ctx context.Context, limit int) ([]model.Article, error)
+	GetRecommendations(ctx context.Context, articleID int64, limit int) ([]model.Article, error)
 }
 
 type articleService struct {
@@ -142,6 +146,16 @@ func (s *articleService) FetchOneUrl(ctx context.Context, url string) error {
 			Tags:        tags,
 		}
 
+		// Embedding を生成（タイトル + 要約の組み合わせ）
+		embeddingText := fmt.Sprintf("Title: %s\nSummary: %s", item.Title, summary)
+		embedding, err := s.GenerateEmbedding(ctx, embeddingText)
+		if err != nil {
+			log.Printf("GenerateEmbedding error: %v", err)
+			// embedding は必須ではないので続行
+		} else if embedding != nil {
+			article.Embedding = embedding
+		}
+
 		// ログを出して、1件のUpsertエラーで処理を中断しない
 		fmt.Printf("Upserting article: %s (%s)\n", article.Title, article.URL)
 		if err := s.repo.UpsertArticle(ctx, article); err != nil {
@@ -155,6 +169,95 @@ func (s *articleService) FetchOneUrl(ctx context.Context, url string) error {
 
 func (s *articleService) ListArticles(ctx context.Context, limit int) ([]model.Article, error) {
 	return s.repo.ListArticles(ctx, limit)
+}
+
+// コサイン類似度を計算
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+
+	var dotProduct float64
+	var magnitudeA float64
+	var magnitudeB float64
+
+	for i := range a {
+		dotProduct += a[i] * b[i]
+		magnitudeA += a[i] * a[i]
+		magnitudeB += b[i] * b[i]
+	}
+
+	magnitudeA = math.Sqrt(magnitudeA)
+	magnitudeB = math.Sqrt(magnitudeB)
+
+	if magnitudeA == 0 || magnitudeB == 0 {
+		return 0
+	}
+
+	return dotProduct / (magnitudeA * magnitudeB)
+}
+
+// GetRecommendations は、指定された記事に基づいて推薦記事を取得
+func (s *articleService) GetRecommendations(ctx context.Context, articleID int64, limit int) ([]model.Article, error) {
+	// 指定された記事を取得
+	articles, err := s.repo.ListArticles(ctx, 1000) // 全記事を取得してメモリで処理
+	if err != nil {
+		return nil, err
+	}
+
+	// 指定されたarticleIDの記事を見つける
+	var targetArticle *model.Article
+	var otherArticles []model.Article
+
+	for i, a := range articles {
+		if a.ID == articleID {
+			targetArticle = &articles[i]
+		} else {
+			otherArticles = append(otherArticles, a)
+		}
+	}
+
+	if targetArticle == nil {
+		return nil, fmt.Errorf("article not found: %d", articleID)
+	}
+
+	if len(targetArticle.Embedding) == 0 {
+		// embeddingがない場合は空を返す
+		return []model.Article{}, nil
+	}
+
+	// 類似度を計算
+	type similarity struct {
+		article model.Article
+		score   float64
+	}
+
+	var similarities []similarity
+
+	for _, article := range otherArticles {
+		if len(article.Embedding) == 0 {
+			continue
+		}
+
+		score := cosineSimilarity(targetArticle.Embedding, article.Embedding)
+		similarities = append(similarities, similarity{article, score})
+	}
+
+	// スコアでソート（降順）
+	sort.Slice(similarities, func(i, j int) bool {
+		return similarities[i].score > similarities[j].score
+	})
+
+	// 上位 limit 件を返す
+	result := make([]model.Article, 0, limit)
+	for i, sim := range similarities {
+		if i >= limit {
+			break
+		}
+		result = append(result, sim.article)
+	}
+
+	return result, nil
 }
 
 // contentをスクレイピング
@@ -182,81 +285,135 @@ func (s *articleService) scrapeZennContent(url string) (string, error) {
 }
 
 func (s *articleService) Summarize(ctx context.Context, content string) (string, error) {
-	client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
-	if err != nil {
-		return fallbackSummary(content), err
-	}
-	defer client.Close()
+	var lastErr error
 
-	modelName := os.Getenv("GEMINI_MODEL")
-	if modelName == "" {
-		modelName = "gemini-2.5-flash-lite"
-	}
-	model := client.GenerativeModel(modelName)
-
-	// プロンプトの組み立て
-	prompt := genai.Text(fmt.Sprintf(
-		"以下の技術記事の内容を、エンジニアが30秒で理解できるように3つの箇条書きで要約してください。\n"+
-			"前置き、あいさつ、補足説明は不要です。要約本文だけをそのまま出力してください。\n\n"+
-			"記事本文:\n%s",
-		content,
-	))
-
-	resp, err := model.GenerateContent(ctx, prompt)
-	if err != nil {
-		if isQuotaError(err) {
-			log.Printf("Gemini quota exceeded, using fallback summary: %v", err)
-			return fallbackSummary(content), nil
+	// リトライロジック：quota 制限で最大6回まで再試行（最大約1分待機）
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			// 指数バックオフ：1秒、2秒、4秒、8秒、16秒、32秒
+			waitTime := time.Duration(1<<uint(attempt-1)) * time.Second
+			log.Printf("Gemini quota error, retrying in %v... (attempt %d/6)", waitTime, attempt+1)
+			select {
+			case <-time.After(waitTime):
+				// wait finished
+			case <-ctx.Done():
+				return fallbackSummary(content), ctx.Err()
+			}
 		}
-		return fallbackSummary(content), err
+
+		client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+		if err != nil {
+			return fallbackSummary(content), err
+		}
+		defer client.Close()
+
+		modelName := os.Getenv("GEMINI_MODEL")
+		if modelName == "" {
+			modelName = "gemini-2.5-flash-lite"
+		}
+		model := client.GenerativeModel(modelName)
+
+		// プロンプトの組み立て
+		prompt := genai.Text(fmt.Sprintf(
+			"以下の技術記事の内容を、エンジニアが30秒で理解できるように3つの箇条書きで要約してください。\n"+
+				"前置き、あいさつ、補足説明は不要です。要約本文だけをそのまま出力してください。\n\n"+
+				"記事本文:\n%s",
+			content,
+		))
+
+		resp, err := model.GenerateContent(ctx, prompt)
+		if err != nil {
+			if isQuotaError(err) {
+				lastErr = err
+				if attempt < 5 {
+					// 最後の試行ではない場合は続行してリトライ
+					continue
+				}
+				// 最後の試行でもquota制限の場合はfallbackを使用
+				log.Printf("Gemini quota exceeded after retries (max ~60s), using fallback summary: %v", err)
+				return fallbackSummary(content), nil
+			}
+			return fallbackSummary(content), err
+		}
+
+		// 成功したら結果を返す
+		if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+			return normalizeSummary(fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])), nil
+		}
 	}
 
-	// レスポンスからテキストを抽出
-	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
-		return normalizeSummary(fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])), nil
+	if lastErr != nil {
+		log.Printf("Summarize failed after retries: %v", lastErr)
 	}
-
 	return fallbackSummary(content), nil
 }
 
 func (s *articleService) GenerateTags(ctx context.Context, content string) (*json.RawMessage, error) {
-	client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
-	if err != nil {
-		return fallbackTags(content), err
-	}
-	defer client.Close()
+	var lastErr error
 
-	modelName := os.Getenv("GEMINI_MODEL")
-	if modelName == "" {
-		modelName = "gemini-2.5-flash-lite"
-	}
-	model := client.GenerativeModel(modelName)
-
-	prompt := genai.Text(fmt.Sprintf(
-		"以下の記事本文から、技術タグを3〜5個抽出してください。\n"+
-			"出力はJSON配列のみ（例: [\"Go\",\"RAG\"]）。説明文や前置きは不要です。\n\n"+
-			"記事本文:\n%s",
-		content,
-	))
-
-	resp, err := model.GenerateContent(ctx, prompt)
-	if err != nil {
-		if isQuotaError(err) {
-			log.Printf("Gemini quota exceeded, using fallback tags: %v", err)
-			return fallbackTags(content), nil
+	// リトライロジック：quota 制限で最大6回まで再試行（最大約1分待機）
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			// 指数バックオフ：1秒、2秒、4秒、8秒、16秒、32秒
+			waitTime := time.Duration(1<<uint(attempt-1)) * time.Second
+			log.Printf("Gemini quota error, retrying in %v... (attempt %d/6)", waitTime, attempt+1)
+			select {
+			case <-time.After(waitTime):
+				// wait finished
+			case <-ctx.Done():
+				return fallbackTags(content), ctx.Err()
+			}
 		}
-		return fallbackTags(content), err
-	}
 
-	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
-		generated := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
-		normalized, parseErr := normalizeTags(generated)
-		if parseErr == nil {
-			return normalized, nil
+		client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+		if err != nil {
+			return fallbackTags(content), err
 		}
-		log.Printf("normalizeTags parse error, using fallback tags: %v", parseErr)
+		defer client.Close()
+
+		modelName := os.Getenv("GEMINI_MODEL")
+		if modelName == "" {
+			modelName = "gemini-2.5-flash-lite"
+		}
+		model := client.GenerativeModel(modelName)
+
+		prompt := genai.Text(fmt.Sprintf(
+			"以下の記事本文から、技術タグを3〜5個抽出してください。\n"+
+				"出力はJSON配列のみ（例: [\"Go\",\"RAG\"]）。説明文や前置きは不要です。\n\n"+
+				"記事本文:\n%s",
+			content,
+		))
+
+		resp, err := model.GenerateContent(ctx, prompt)
+		if err != nil {
+			if isQuotaError(err) {
+				lastErr = err
+				if attempt < 5 {
+					// 最後の試行ではない場合は続行してリトライ
+					continue
+				}
+				// 最後の試行でもquota制限の場合はfallbackを使用
+				log.Printf("Gemini quota exceeded after retries (max ~60s), using fallback tags: %v", err)
+				return fallbackTags(content), nil
+			}
+			return fallbackTags(content), err
+		}
+
+		if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+			generated := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+			normalized, parseErr := normalizeTags(generated)
+			if parseErr == nil {
+				return normalized, nil
+			}
+			log.Printf("normalizeTags parse error, using fallback tags: %v", parseErr)
+		}
+
+		return fallbackTags(content), nil
 	}
 
+	if lastErr != nil {
+		log.Printf("GenerateTags failed after retries: %v", lastErr)
+	}
 	return fallbackTags(content), nil
 }
 
@@ -432,4 +589,113 @@ func isQuotaError(err error) bool {
 	return strings.Contains(message, "quota exceeded") ||
 		strings.Contains(message, "429") ||
 		regexp.MustCompile(`limit:\s*0`).MatchString(message)
+}
+
+func (s *articleService) GenerateEmbedding(ctx context.Context, text string) ([]float64, error) {
+	var lastErr error
+
+	// リトライロジック：quota 制限で最大6回まで再試行（最大約1分待機）
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			// 指数バックオフ：1秒、2秒、4秒、8秒、16秒、32秒
+			waitTime := time.Duration(1<<uint(attempt-1)) * time.Second
+			log.Printf("Gemini quota error, retrying embedding in %v... (attempt %d/6)", waitTime, attempt+1)
+			select {
+			case <-time.After(waitTime):
+				// wait finished
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		// REST API を直接呼び出し
+		embedding, err := s.generateEmbeddingViaAPI(ctx, text)
+		if err != nil {
+			if isQuotaError(err) {
+				lastErr = err
+				if attempt < 5 {
+					// 最後の試行ではない場合は続行してリトライ
+					continue
+				}
+				// 最後の試行でもquota制限の場合はnilを返す
+				log.Printf("Gemini quota exceeded for embedding after retries, returning nil: %v", err)
+				return nil, nil
+			}
+			// Quota以外のエラーは即座に返す
+			return nil, err
+		}
+
+		return embedding, nil
+	}
+
+	if lastErr != nil {
+		log.Printf("GenerateEmbedding failed after retries: %v", lastErr)
+	}
+	return nil, nil
+}
+
+func (s *articleService) generateEmbeddingViaAPI(ctx context.Context, text string) ([]float64, error) {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY not set")
+	}
+
+	url := "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=" + apiKey
+
+	// リクエストボディ
+	payload := map[string]interface{}{
+		"model": "models/text-embedding-004",
+		"content": map[string]interface{}{
+			"parts": []map[string]string{
+				{"text": text},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// レスポンスボディを読む
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// エラーレスポンスを確認
+	if resp.StatusCode != http.StatusOK {
+		errMsg := string(respBody)
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == 429 {
+			return nil, fmt.Errorf("quota exceeded: %s", errMsg)
+		}
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, errMsg)
+	}
+
+	// レスポンスをパース
+	var result struct {
+		Embedding struct {
+			Values []float64 `json:"values"`
+		} `json:"embedding"`
+	}
+
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return result.Embedding.Values, nil
 }
