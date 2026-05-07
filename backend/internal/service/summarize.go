@@ -69,6 +69,33 @@ func (s *articleService) Summarize(ctx context.Context, content string) (string,
     if lastErr != nil {
         log.Printf("Summarize failed after retries: %v", lastErr)
     }
+    // 最後のフォールバックを返す前に、もう一度だけ即時に要約を試みる
+    client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+    if err == nil {
+        defer client.Close()
+        modelName := os.Getenv("GEMINI_MODEL")
+        if modelName == "" {
+            modelName = "gemini-2.5-flash-lite"
+        }
+        model := client.GenerativeModel(modelName)
+
+        prompt := genai.Text(fmt.Sprintf(
+            "以下の技術記事の内容を、エンジニアが30秒で理解できるように3つの箇条書きで要約してください。\n"+
+                "前置き、あいさつ、補足説明は不要です。要約本文だけをそのまま出力してください。\n\n"+
+                "記事本文:\n%s",
+            content,
+        ))
+
+        resp, err := model.GenerateContent(ctx, prompt)
+        if err == nil {
+            if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+                return normalizeSummary(fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])), nil
+            }
+        } else {
+            log.Printf("Final quick summarize attempt failed: %v", err)
+        }
+    }
+
     return fallbackSummary(content), nil
 }
 
@@ -140,4 +167,8 @@ func fallbackSummary(content string) string {
     }
 
     return "要約を生成できなかったため、本文の冒頭を表示します: " + cleaned
+}
+
+func isFallbackSummary(text string) bool {
+    return strings.HasPrefix(strings.TrimSpace(text), "要約を生成できなかったため、本文の冒頭を表示します:")
 }
