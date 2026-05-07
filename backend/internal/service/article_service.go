@@ -168,7 +168,9 @@ func (s *articleService) Summarize(ctx context.Context, content string) (string,
 
 	// プロンプトの組み立て
 	prompt := genai.Text(fmt.Sprintf(
-		"以下の技術記事の内容を、エンジニアが30秒で理解できるように3つの箇条書きで要約してください。\n\n記事本文:\n%s",
+		"以下の技術記事の内容を、エンジニアが30秒で理解できるように3つの箇条書きで要約してください。\n"+
+		"前置き、あいさつ、補足説明は不要です。要約本文だけをそのまま出力してください。\n\n"+
+		"記事本文:\n%s",
 		content,
 	))
 
@@ -183,10 +185,66 @@ func (s *articleService) Summarize(ctx context.Context, content string) (string,
 
 	// レスポンスからテキストを抽出
 	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
-		return fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0]), nil
+		return normalizeSummary(fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])), nil
 	}
 
 	return fallbackSummary(content), nil
+}
+
+func normalizeSummary(summary string) string {
+	cleaned := strings.TrimSpace(summary)
+	if cleaned == "" {
+		return cleaned
+	}
+
+	lines := strings.Split(cleaned, "\n")
+	bulletLines := make([]string, 0, len(lines))
+	seenBullet := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if seenBullet {
+				bulletLines = append(bulletLines, "")
+			}
+			continue
+		}
+
+		lower := strings.ToLower(trimmed)
+		if !seenBullet && (strings.HasPrefix(trimmed, "わかりました") ||
+			strings.HasPrefix(trimmed, "承知しました") ||
+			strings.HasPrefix(trimmed, "以下") ||
+			strings.HasPrefix(trimmed, "要約")) {
+			continue
+		}
+
+		if isBulletLine(trimmed) {
+			seenBullet = true
+			bulletLines = append(bulletLines, trimmed)
+			continue
+		}
+
+		if seenBullet {
+			bulletLines = append(bulletLines, trimmed)
+			continue
+		}
+
+		if strings.Contains(lower, "要約") && strings.Contains(lower, "箇条書き") {
+			continue
+		}
+	}
+
+	if len(bulletLines) > 0 {
+		return strings.TrimSpace(strings.Join(bulletLines, "\n"))
+	}
+
+	return cleaned
+}
+
+func isBulletLine(line string) bool {
+	return strings.HasPrefix(line, "-") ||
+		strings.HasPrefix(line, "・") ||
+		regexp.MustCompile(`^\d+[.)]`).MatchString(line)
 }
 
 func fallbackSummary(content string) string {

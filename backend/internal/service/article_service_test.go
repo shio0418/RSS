@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/shio0418/RSS/internal/model"
@@ -81,5 +82,19 @@ func TestFetchOneUrl_SkipSummarize(t *testing.T) {
 
 	if repo.saved.Summary == nil || *repo.saved.Summary != "既存の要約" {
 		t.Fatalf("Expected saved summary to be existing summary, got: %#v", repo.saved.Summary)
+	}
+}
+
+func TestNormalizeSummary(t *testing.T) {
+	input := "わかりました。\n- 1つ目のポイント\n- 2つ目のポイント\n- 3つ目のポイント"
+
+	got := normalizeSummary(input)
+	if strings.Contains(got, "わかりました") {
+		t.Fatalf("expected acknowledgement to be removed, got: %q", got)
+	}
+
+	expected := "- 1つ目のポイント\n- 2つ目のポイント\n- 3つ目のポイント"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
 	}
 }
