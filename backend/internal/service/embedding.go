@@ -10,7 +10,23 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+)
+
+const (
+	embeddingModelDiscoverySuccessTTL = 30 * time.Minute
+	embeddingModelDiscoveryFailureTTL = 5 * time.Minute
+)
+
+type embeddingModelCacheEntry struct {
+	modelName string
+	expiresAt time.Time
+}
+
+var (
+	embeddingModelCacheMu sync.RWMutex
+	embeddingModelCache   = map[string]embeddingModelCacheEntry{}
 )
 
 func (s *articleService) GenerateEmbedding(ctx context.Context, text string) ([]float64, error) {
@@ -86,14 +102,38 @@ func (s *articleService) generateEmbeddingViaAPI(ctx context.Context, text strin
 	}
 
 	for _, apiVersion := range apiVersions {
+		if cachedModel, cacheHit := getCachedEmbeddingModel(apiVersion); cacheHit {
+			if cachedModel != "" {
+				embedding, statusCode, errMsg, err := requestEmbedding(ctx, apiKey, cachedModel, text, apiVersion)
+				if err == nil {
+					return embedding, nil
+				}
+				lastStatusCode = statusCode
+				lastErrMsg = errMsg
+				if statusCode != http.StatusNotFound {
+					if statusCode == http.StatusTooManyRequests {
+						return nil, fmt.Errorf("quota exceeded: %s", errMsg)
+					}
+					return nil, fmt.Errorf("API error (%d): %s", statusCode, errMsg)
+				}
+				clearCachedEmbeddingModel(apiVersion)
+			}
+			if cachedModel == "" {
+				continue
+			}
+		}
+
 		candidate, listErr := discoverEmbeddingModel(ctx, apiKey, apiVersion)
 		if listErr != nil {
 			log.Printf("discover embedding model failed on %s: %v", apiVersion, listErr)
+			setCachedEmbeddingModel(apiVersion, "", embeddingModelDiscoveryFailureTTL)
 			continue
 		}
 		if candidate == "" {
+			setCachedEmbeddingModel(apiVersion, "", embeddingModelDiscoveryFailureTTL)
 			continue
 		}
+		setCachedEmbeddingModel(apiVersion, candidate, embeddingModelDiscoverySuccessTTL)
 
 		embedding, statusCode, errMsg, err := requestEmbedding(ctx, apiKey, candidate, text, apiVersion)
 		if err == nil {
@@ -118,6 +158,35 @@ func (s *articleService) generateEmbeddingViaAPI(ctx context.Context, text strin
 	}
 
 	return nil, fmt.Errorf("API error (%d): %s", lastStatusCode, lastErrMsg)
+}
+
+func getCachedEmbeddingModel(apiVersion string) (string, bool) {
+	embeddingModelCacheMu.RLock()
+	entry, ok := embeddingModelCache[apiVersion]
+	embeddingModelCacheMu.RUnlock()
+	if !ok {
+		return "", false
+	}
+	if time.Now().After(entry.expiresAt) {
+		clearCachedEmbeddingModel(apiVersion)
+		return "", false
+	}
+	return entry.modelName, true
+}
+
+func setCachedEmbeddingModel(apiVersion, modelName string, ttl time.Duration) {
+	embeddingModelCacheMu.Lock()
+	embeddingModelCache[apiVersion] = embeddingModelCacheEntry{
+		modelName: modelName,
+		expiresAt: time.Now().Add(ttl),
+	}
+	embeddingModelCacheMu.Unlock()
+}
+
+func clearCachedEmbeddingModel(apiVersion string) {
+	embeddingModelCacheMu.Lock()
+	delete(embeddingModelCache, apiVersion)
+	embeddingModelCacheMu.Unlock()
 }
 
 func requestEmbedding(ctx context.Context, apiKey, modelName, text, apiVersion string) ([]float64, int, string, error) {
