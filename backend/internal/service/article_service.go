@@ -19,7 +19,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-var bulletNumberRE = regexp.MustCompile(`^\d+[.)]`)
+var bulletNumberRegex = regexp.MustCompile(`^\d+[.)]`)
 
 type ArticleService interface {
 	FetchAndSummarize(ctx context.Context, urls []string) error
@@ -246,7 +246,7 @@ func normalizeSummary(summary string) string {
 func isBulletLine(line string) bool {
 	return strings.HasPrefix(line, "-") ||
 		strings.HasPrefix(line, "・") ||
-		bulletNumberRE.MatchString(line)
+		bulletNumberRegex.MatchString(line)
 }
 
 func fallbackSummary(content string) string {
