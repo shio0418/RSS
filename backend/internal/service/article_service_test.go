@@ -38,6 +38,8 @@ func (m *mockRepo) GetArticleByURL(ctx context.Context, url string) (*model.Arti
 }
 
 func TestFetchOneUrl(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+
 	contentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		io.WriteString(w, testArticleHTML)
@@ -89,6 +91,11 @@ func TestFetchOneUrl(t *testing.T) {
 
 	if repo.saved.Summary == nil || *repo.saved.Summary == "" {
 		t.Fatalf("expected non-empty summary to be saved")
+	}
+
+	expectedSummary := fallbackSummary(repo.saved.Content)
+	if *repo.saved.Summary != expectedSummary {
+		t.Fatalf("expected summary %q, got %q", expectedSummary, *repo.saved.Summary)
 	}
 }
 
