@@ -50,6 +50,7 @@ const ArticleCard = ({
           <button
             type="button"
             className="p-2 rounded-full bg-pink-50 text-pink-500 hover:bg-pink-100 transition-colors"
+            aria-label="興味あり"
             title="興味あり"
             onClick={onLike}
           >
@@ -58,6 +59,7 @@ const ArticleCard = ({
           <button
             type="button"
             className="p-2 rounded-full bg-cyan-50 text-cyan-500 hover:bg-cyan-100 transition-colors"
+            aria-label="興味なし"
             title="興味なし"
             onClick={onDislike}
           >
