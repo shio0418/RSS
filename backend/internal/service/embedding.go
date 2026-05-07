@@ -8,215 +8,254 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 func (s *articleService) GenerateEmbedding(ctx context.Context, text string) ([]float64, error) {
-    var lastErr error
+	var lastErr error
 
-    for attempt := 0; attempt < 6; attempt++ {
-        if attempt > 0 {
-            waitTime := time.Duration(1<<uint(attempt-1)) * time.Second
-            log.Printf("Gemini quota error, retrying embedding in %v... (attempt %d/6)", waitTime, attempt+1)
-            select {
-            case <-time.After(waitTime):
-            case <-ctx.Done():
-                return nil, ctx.Err()
-            }
-        }
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			waitTime := time.Duration(1<<uint(attempt-1)) * time.Second
+			log.Printf("Gemini quota error, retrying embedding in %v... (attempt %d/6)", waitTime, attempt+1)
+			select {
+			case <-time.After(waitTime):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
 
-        embedding, err := s.generateEmbeddingViaAPI(ctx, text)
-        if err != nil {
-            if isQuotaError(err) {
-                lastErr = err
-                if attempt < 5 {
-                    continue
-                }
-                log.Printf("Gemini quota exceeded for embedding after retries, returning nil: %v", err)
-                return nil, nil
-            }
-            return nil, err
-        }
+		embedding, err := s.generateEmbeddingViaAPI(ctx, text)
+		if err != nil {
+			if isQuotaError(err) {
+				lastErr = err
+				if attempt < 5 {
+					continue
+				}
+				log.Printf("Gemini quota exceeded for embedding after retries, returning nil: %v", err)
+				return nil, nil
+			}
+			return nil, err
+		}
 
-        return embedding, nil
-    }
+		return embedding, nil
+	}
 
-    if lastErr != nil {
-        log.Printf("GenerateEmbedding failed after retries: %v", lastErr)
-    }
-    return nil, nil
+	if lastErr != nil {
+		log.Printf("GenerateEmbedding failed after retries: %v", lastErr)
+	}
+	return nil, nil
 }
 
 func (s *articleService) generateEmbeddingViaAPI(ctx context.Context, text string) ([]float64, error) {
-    apiKey := os.Getenv("GEMINI_API_KEY")
-    if apiKey == "" {
-        return nil, fmt.Errorf("GEMINI_API_KEY not set")
-    }
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY not set")
+	}
 
-    // 初期的に使うモデル名（過去の設定）。見つからない場合は ListModels を参照して再試行する。
-    modelName := "models/text-embedding-004"
+	// SDK の model 指定に合わせて、環境変数で上書き可能にする
+	modelName := os.Getenv("EMBEDDING_MODEL")
+	if modelName == "" {
+		modelName = "models/gemini-embedding-001"
+	}
 
-    url := func(m string) string {
-        return "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":embedContent?key=" + apiKey
-    }(modelName)
+	apiVersions := []string{"v1", "v1beta"}
+	lastStatusCode := 0
+	lastErrMsg := ""
 
-    payload := map[string]interface{}{
-        "model": modelName,
-        "content": map[string]interface{}{
-            "parts": []map[string]string{{"text": text}},
-        },
-    }
+	for _, apiVersion := range apiVersions {
+		embedding, statusCode, errMsg, err := requestEmbedding(ctx, apiKey, modelName, text, apiVersion)
+		if err == nil {
+			return embedding, nil
+		}
 
-    body, err := json.Marshal(payload)
-    if err != nil {
-        return nil, fmt.Errorf("failed to marshal request: %w", err)
-    }
+		lastStatusCode = statusCode
+		lastErrMsg = errMsg
 
-    req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(body)))
-    if err != nil {
-        return nil, fmt.Errorf("failed to create request: %w", err)
-    }
+		if statusCode == http.StatusTooManyRequests {
+			return nil, fmt.Errorf("quota exceeded: %s", errMsg)
+		}
 
-    req.Header.Set("Content-Type", "application/json")
+		if statusCode != http.StatusNotFound {
+			return nil, fmt.Errorf("API error (%d): %s", statusCode, errMsg)
+		}
 
-    client := &http.Client{}
-    resp, err := client.Do(req)
-    if err != nil {
-        return nil, fmt.Errorf("failed to make request: %w", err)
-    }
-    defer resp.Body.Close()
+		log.Printf("embedding model not found (%s on %s). attempting to discover embedding-capable models...", modelName, apiVersion)
+	}
 
-    respBody, err := io.ReadAll(resp.Body)
-    if err != nil {
-        return nil, fmt.Errorf("failed to read response: %w", err)
-    }
+	for _, apiVersion := range apiVersions {
+		candidate, listErr := discoverEmbeddingModel(ctx, apiKey, apiVersion)
+		if listErr != nil {
+			log.Printf("discover embedding model failed on %s: %v", apiVersion, listErr)
+			continue
+		}
+		if candidate == "" {
+			continue
+		}
 
-    if resp.StatusCode != http.StatusOK {
-        errMsg := string(respBody)
-        // 404 の場合は ListModels で埋め込み可能なモデルを探して再試行
-        if resp.StatusCode == http.StatusNotFound {
-            log.Printf("embedding model not found (%s). attempting to discover embedding-capable models...", modelName)
-            candidate, listErr := discoverEmbeddingModel(ctx, apiKey)
-            if listErr == nil && candidate != "" {
-                // 再試行
-                url = "https://generativelanguage.googleapis.com/v1beta/models/" + candidate + ":embedContent?key=" + apiKey
-                payload["model"] = candidate
-                body2, _ := json.Marshal(payload)
-                req2, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(body2)))
-                req2.Header.Set("Content-Type", "application/json")
-                resp2, err2 := (&http.Client{}).Do(req2)
-                if err2 != nil {
-                    return nil, fmt.Errorf("failed to make retry request: %w", err2)
-                }
-                defer resp2.Body.Close()
-                respBody2, err := io.ReadAll(resp2.Body)
-                if err != nil {
-                    return nil, fmt.Errorf("failed to read retry response: %w", err)
-                }
-                if resp2.StatusCode != http.StatusOK {
-                    return nil, fmt.Errorf("API error (%d): %s", resp2.StatusCode, string(respBody2))
-                }
-                var result2 struct {
-                    Embedding struct {
-                        Values []float64 `json:"values"`
-                    } `json:"embedding"`
-                }
-                if err := json.Unmarshal(respBody2, &result2); err != nil {
-                    return nil, fmt.Errorf("failed to parse retry response: %w", err)
-                }
-                return result2.Embedding.Values, nil
-            }
-        }
-        if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == 429 {
-            return nil, fmt.Errorf("quota exceeded: %s", errMsg)
-        }
-        return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, errMsg)
-    }
+		embedding, statusCode, errMsg, err := requestEmbedding(ctx, apiKey, candidate, text, apiVersion)
+		if err == nil {
+			log.Printf("embedding model discovered: %s (api=%s)", candidate, apiVersion)
+			return embedding, nil
+		}
 
-    var result struct {
-        Embedding struct {
-            Values []float64 `json:"values"`
-        } `json:"embedding"`
-    }
+		lastStatusCode = statusCode
+		lastErrMsg = errMsg
 
-    if err := json.Unmarshal(respBody, &result); err != nil {
-        return nil, fmt.Errorf("failed to parse response: %w", err)
-    }
+		if statusCode == http.StatusTooManyRequests {
+			return nil, fmt.Errorf("quota exceeded: %s", errMsg)
+		}
 
-    return result.Embedding.Values, nil
+		if statusCode != http.StatusNotFound {
+			return nil, fmt.Errorf("API error (%d): %s", statusCode, errMsg)
+		}
+	}
+
+	if lastStatusCode == 0 {
+		return nil, fmt.Errorf("failed to discover embedding model on both v1 and v1beta")
+	}
+
+	return nil, fmt.Errorf("API error (%d): %s", lastStatusCode, lastErrMsg)
+}
+
+func requestEmbedding(ctx context.Context, apiKey, modelName, text, apiVersion string) ([]float64, int, string, error) {
+	formattedModelName := strings.TrimPrefix(modelName, "models/")
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/%s/models/%s:embedContent?key=%s", apiVersion, formattedModelName, apiKey)
+
+	outputDimensionality := 768
+	if dimEnv := os.Getenv("EMBEDDING_DIM"); dimEnv != "" {
+		if parsed, err := strconv.Atoi(dimEnv); err == nil && parsed > 0 {
+			outputDimensionality = parsed
+		}
+	}
+
+	payload := map[string]interface{}{
+		"model": "models/" + formattedModelName,
+		"content": map[string]interface{}{
+			"parts": []map[string]string{{"text": text}},
+		},
+		"outputDimensionality": outputDimensionality,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, string(respBody), fmt.Errorf("non-200 response")
+	}
+
+	var result struct {
+		Embedding struct {
+			Values []float64 `json:"values"`
+		} `json:"embedding"`
+	}
+
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, 0, "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return result.Embedding.Values, http.StatusOK, "", nil
 }
 
 // discoverEmbeddingModel queries ListModels and returns a candidate model name
 // that likely supports embedding. It is a best-effort heuristic.
-func discoverEmbeddingModel(ctx context.Context, apiKey string) (string, error) {
-    url := "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey
-    req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-    if err != nil {
-        return "", err
-    }
-    resp, err := (&http.Client{}).Do(req)
-    if err != nil {
-        return "", err
-    }
-    defer resp.Body.Close()
-    body, err := io.ReadAll(resp.Body)
-    if err != nil {
-        return "", err
-    }
-    if resp.StatusCode != http.StatusOK {
-        return "", fmt.Errorf("ListModels API error (%d): %s", resp.StatusCode, string(body))
-    }
+func discoverEmbeddingModel(ctx context.Context, apiKey, apiVersion string) (string, error) {
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/%s/models?key=%s", apiVersion, apiKey)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ListModels API error (%d): %s", resp.StatusCode, string(body))
+	}
 
-    var parsed map[string]interface{}
-    if err := json.Unmarshal(body, &parsed); err != nil {
-        return "", err
-    }
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
 
-    modelsRaw, ok := parsed["models"]
-    if !ok {
-        return "", fmt.Errorf("no models field in ListModels response")
-    }
-    models, ok := modelsRaw.([]interface{})
-    if !ok {
-        return "", fmt.Errorf("unexpected models format")
-    }
+	modelsRaw, ok := parsed["models"]
+	if !ok {
+		return "", fmt.Errorf("no models field in ListModels response")
+	}
+	models, ok := modelsRaw.([]interface{})
+	if !ok {
+		return "", fmt.Errorf("unexpected models format")
+	}
 
-    // Heuristic: prefer model names containing "embed" or "embedding"
-    for _, m := range models {
-        mp, ok := m.(map[string]interface{})
-        if !ok {
-            continue
-        }
-        nameRaw, ok := mp["name"]
-        if !ok {
-            continue
-        }
-        name, ok := nameRaw.(string)
-        if !ok {
-            continue
-        }
-        low := strings.ToLower(name)
-        if strings.Contains(low, "embed") || strings.Contains(low, "embedding") {
-            return name, nil
-        }
-        // also check metadata.supportedMethods if present
-        if metaRaw, ok := mp["metadata"]; ok {
-            if meta, ok := metaRaw.(map[string]interface{}); ok {
-                if methodsRaw, ok := meta["supportedMethods"]; ok {
-                    if methods, ok := methodsRaw.([]interface{}); ok {
-                        for _, mm := range methods {
-                            if ms, ok := mm.(string); ok {
-                                if strings.Contains(strings.ToLower(ms), "embed") {
-                                    return name, nil
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+	// Heuristic: prefer model names containing "embed" or "embedding"
+	for _, m := range models {
+		mp, ok := m.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		nameRaw, ok := mp["name"]
+		if !ok {
+			continue
+		}
+		name, ok := nameRaw.(string)
+		if !ok {
+			continue
+		}
+		low := strings.ToLower(name)
+		if strings.Contains(low, "embed") || strings.Contains(low, "embedding") {
+			return name, nil
+		}
 
-    return "", fmt.Errorf("no embedding-capable model found in ListModels response")
+		// 互換性のため、supportedMethods / supportedGenerationMethods の両方を見る
+		if methodNameIncludesEmbed(mp["supportedMethods"]) || methodNameIncludesEmbed(mp["supportedGenerationMethods"]) {
+			return name, nil
+		}
+	}
+
+	return "", fmt.Errorf("no embedding-capable model found in ListModels response")
+}
+
+func methodNameIncludesEmbed(raw interface{}) bool {
+	methods, ok := raw.([]interface{})
+	if !ok {
+		return false
+	}
+	for _, m := range methods {
+		ms, ok := m.(string)
+		if !ok {
+			continue
+		}
+		if strings.Contains(strings.ToLower(ms), "embed") {
+			return true
+		}
+	}
+	return false
 }
