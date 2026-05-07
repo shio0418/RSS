@@ -1,73 +1,71 @@
-import { useEffect, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ArticleCard from './components/ArticleCard'
 
-type Article = {
-  url: string
+type MockArticle = {
+  id: string
   title: string
-  source_name: string
-  summary: string | null
+  summary: string
+  tags: string[]
+  sourceName: string
+  publishedLabel: string
+  imageEmoji: string
 }
 
+const mockArticles: MockArticle[] = [
+  {
+    id: 'a1',
+    title: 'ReactとGoで作る全文検索エンジンの裏側',
+    summary: 'Gemini APIで要約した記事を保存し、検索までつなぐ実装フローを整理した記事です。',
+    tags: ['Go', 'React', 'Gemini'],
+    sourceName: 'Zenn',
+    publishedLabel: '3時間前',
+    imageEmoji: '🔎',
+  },
+  {
+    id: 'a2',
+    title: 'RAGパイプラインにおける失敗時フォールバック設計',
+    summary: '外部APIが失敗した時でも読みやすい要約を返すためのフォールバック戦略を解説します。',
+    tags: ['LLM', 'RAG', 'Backend'],
+    sourceName: 'Qiita',
+    publishedLabel: '昨日',
+    imageEmoji: '🛟',
+  },
+  {
+    id: 'a3',
+    title: 'テストを安定化する: httptestで外部依存を消す',
+    summary: 'CIで詰まりやすい外部HTTP依存を、httptestでローカル完結にする方法を紹介します。',
+    tags: ['Go Test', 'CI', 'Quality'],
+    sourceName: 'Tech Blog',
+    publishedLabel: '2日前',
+    imageEmoji: '🧪',
+  },
+]
+
 function App() {
-  const [articles, setArticles] = useState<Article[]>([])
-  const [loading, setLoading] = useState(false)
-
-  const loadArticles = async () => {
-    const res = await fetch('http://localhost:8080/articles')
-    const data = await res.json()
-    setArticles(data)
-  }
-
-  const fetchAndRefresh = async () => {
-    setLoading(true)
-
-    try {
-      await fetch('http://localhost:8080/fetch', { method: 'POST' })
-      await loadArticles()
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetch('http://localhost:8080/articles')
-      .then(res => res.json())
-      .then(data => setArticles(data))
-      .catch(err => console.error(err))
-  }, [])
-
   return (
-    <div style={{ 
-      display: 'flex', 
-      flexDirection: 'column', 
-      alignItems: 'flex-start', // これが「左寄せ」の鍵
-      justifyContent: 'flex-start', 
-      minHeight: '100vh',
-      padding: '40px',          // 少し余白を設けるのが「美しく見せる」コツ
-      textAlign: 'left'
-    }}>
-      <h1>RSS Reader</h1>
-      <button type="button" onClick={() => void fetchAndRefresh()} disabled={loading}>
-        {loading ? '更新中...' : '記事を取得して要約'}
-      </button>
-      <ul>
-        {articles.map((article, index) => (
-          <li key={index}>
-            <a href={article.url} target="_blank" rel="noreferrer">
-              {article.title}
-            </a>
-            <span style={{ marginLeft: '10px', color: '#666', fontSize: '0.8em' }}>
-              ({article.source_name})
-            </span>
-            <div style={{ marginTop: '6px', color: '#333' }}>
-              <ReactMarkdown>{article.summary ?? '要約なし'}</ReactMarkdown>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <main className="min-h-screen bg-slate-50 py-10 px-4 sm:px-8">
+      <div className="max-w-6xl mx-auto">
+        <header className="mb-8">
+          <h1 className="text-3xl sm:text-4xl font-bold text-slate-800">RSS Reader</h1>
+          <p className="text-slate-500 mt-2">モック記事カード一覧</p>
+        </header>
+
+        <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          {mockArticles.map((article) => (
+            <ArticleCard
+              key={article.id}
+              title={article.title}
+              summary={article.summary}
+              tags={article.tags}
+              sourceName={article.sourceName}
+              publishedLabel={article.publishedLabel}
+              imageEmoji={article.imageEmoji}
+              onLike={() => console.log('like:', article.id)}
+              onDislike={() => console.log('dislike:', article.id)}
+            />
+          ))}
+        </section>
+      </div>
+    </main>
   )
 }
 
