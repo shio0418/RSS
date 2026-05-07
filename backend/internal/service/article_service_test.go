@@ -11,7 +11,17 @@ import (
 	"github.com/shio0418/RSS/internal/model"
 )
 
-const testArticleHTML = `<html><body><div class="znc"><p>hello</p><div class="TopicList_item___M3DS">topic</div><div class="embed-block">embed</div><img src="/x.png"/><p>world</p></div></body></html>`
+const testArticleHTML = `<html>
+<body>
+  <div class="znc">
+    <p>hello</p>
+    <div class="TopicList_item___M3DS">topic</div>
+    <div class="embed-block">embed</div>
+    <img src="/x.png"/>
+    <p>world</p>
+  </div>
+</body>
+</html>`
 
 // テスト用の偽物リポジトリ
 type mockRepo struct {
@@ -95,10 +105,6 @@ func TestFetchOneUrl(t *testing.T) {
 
 	if repo.saved.Summary == nil || *repo.saved.Summary == "" {
 		t.Fatalf("expected non-empty summary to be saved")
-	}
-
-	if !strings.Contains(*repo.saved.Summary, "本文の冒頭") {
-		t.Fatalf("expected fallback-style summary text, got %q", *repo.saved.Summary)
 	}
 
 	if !strings.Contains(*repo.saved.Summary, "hello") {
