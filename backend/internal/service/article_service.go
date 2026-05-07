@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -140,6 +141,16 @@ func (s *articleService) FetchOneUrl(ctx context.Context, url string) error {
 			Content:     content,
 			Summary:     &summary,
 			Tags:        tags,
+		}
+
+		// Embedding を生成（タイトル + 要約の組み合わせ）
+		embeddingText := fmt.Sprintf("Title: %s\nSummary: %s", item.Title, summary)
+		embedding, err := s.GenerateEmbedding(ctx, embeddingText)
+		if err != nil {
+			log.Printf("GenerateEmbedding error: %v", err)
+			// embedding は必須ではないので続行
+		} else if embedding != nil {
+			article.Embedding = embedding
 		}
 
 		// ログを出して、1件のUpsertエラーで処理を中断しない
@@ -486,4 +497,113 @@ func isQuotaError(err error) bool {
 	return strings.Contains(message, "quota exceeded") ||
 		strings.Contains(message, "429") ||
 		regexp.MustCompile(`limit:\s*0`).MatchString(message)
+}
+
+func (s *articleService) GenerateEmbedding(ctx context.Context, text string) ([]float64, error) {
+	var lastErr error
+
+	// リトライロジック：quota 制限で最大6回まで再試行（最大約1分待機）
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			// 指数バックオフ：1秒、2秒、4秒、8秒、16秒、32秒
+			waitTime := time.Duration(1<<uint(attempt-1)) * time.Second
+			log.Printf("Gemini quota error, retrying embedding in %v... (attempt %d/6)", waitTime, attempt+1)
+			select {
+			case <-time.After(waitTime):
+				// wait finished
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		// REST API を直接呼び出し
+		embedding, err := s.generateEmbeddingViaAPI(ctx, text)
+		if err != nil {
+			if isQuotaError(err) {
+				lastErr = err
+				if attempt < 5 {
+					// 最後の試行ではない場合は続行してリトライ
+					continue
+				}
+				// 最後の試行でもquota制限の場合はnilを返す
+				log.Printf("Gemini quota exceeded for embedding after retries, returning nil: %v", err)
+				return nil, nil
+			}
+			// Quota以外のエラーは即座に返す
+			return nil, err
+		}
+
+		return embedding, nil
+	}
+
+	if lastErr != nil {
+		log.Printf("GenerateEmbedding failed after retries: %v", lastErr)
+	}
+	return nil, nil
+}
+
+func (s *articleService) generateEmbeddingViaAPI(ctx context.Context, text string) ([]float64, error) {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY not set")
+	}
+
+	url := "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=" + apiKey
+
+	// リクエストボディ
+	payload := map[string]interface{}{
+		"model": "models/text-embedding-004",
+		"content": map[string]interface{}{
+			"parts": []map[string]string{
+				{"text": text},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// レスポンスボディを読む
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// エラーレスポンスを確認
+	if resp.StatusCode != http.StatusOK {
+		errMsg := string(respBody)
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == 429 {
+			return nil, fmt.Errorf("quota exceeded: %s", errMsg)
+		}
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, errMsg)
+	}
+
+	// レスポンスをパース
+	var result struct {
+		Embedding struct {
+			Values []float64 `json:"values"`
+		} `json:"embedding"`
+	}
+
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return result.Embedding.Values, nil
 }
