@@ -74,11 +74,11 @@ func TestFetchOneUrl(t *testing.T) {
 	}
 
 	if !strings.Contains(repo.saved.Content, "hello") || !strings.Contains(repo.saved.Content, "world") {
-		t.Fatalf("expected scraped content to include article text, got %q", repo.saved.Content)
+		t.Fatalf("expected content to contain %q and %q, got %q", "hello", "world", repo.saved.Content)
 	}
 
 	if strings.Contains(repo.saved.Content, "topic") || strings.Contains(repo.saved.Content, "embed") {
-		t.Fatalf("expected filtered scraped content, got %q", repo.saved.Content)
+		t.Fatalf("expected content to not contain %q or %q (filtered elements), got %q", "topic", "embed", repo.saved.Content)
 	}
 
 	if repo.saved.Summary == nil || *repo.saved.Summary == "" {
