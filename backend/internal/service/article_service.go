@@ -19,6 +19,8 @@ import (
 	"google.golang.org/api/option"
 )
 
+var bulletNumberRE = regexp.MustCompile(`^\d+[.)]`)
+
 type ArticleService interface {
 	FetchAndSummarize(ctx context.Context, urls []string) error
 	ListArticles(ctx context.Context, limit int) ([]model.Article, error)
@@ -244,7 +246,7 @@ func normalizeSummary(summary string) string {
 func isBulletLine(line string) bool {
 	return strings.HasPrefix(line, "-") ||
 		strings.HasPrefix(line, "・") ||
-		regexp.MustCompile(`^\d+[.)]`).MatchString(line)
+		bulletNumberRE.MatchString(line)
 }
 
 func fallbackSummary(content string) string {
