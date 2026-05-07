@@ -1,3 +1,5 @@
+import ReactMarkdown from 'react-markdown'
+
 type ArticleCardProps = {
   title: string
   summary: string
@@ -31,7 +33,9 @@ const ArticleCard = ({
       <div className="flex flex-col gap-3">
         <h2 className="text-xl font-bold text-blue-600 leading-tight line-clamp-2">{title}</h2>
         {sourceName ? <p className="text-xs text-gray-400">{sourceName}</p> : null}
-        <p className="text-sm text-gray-500 leading-relaxed line-clamp-3">{summary}</p>
+        <div className="prose prose-sm max-w-none text-sm text-gray-500 leading-relaxed line-clamp-3 prose-p:m-0 prose-ul:m-0 prose-li:m-0">
+          <ReactMarkdown>{summary}</ReactMarkdown>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
