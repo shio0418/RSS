@@ -182,81 +182,135 @@ func (s *articleService) scrapeZennContent(url string) (string, error) {
 }
 
 func (s *articleService) Summarize(ctx context.Context, content string) (string, error) {
-	client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
-	if err != nil {
-		return fallbackSummary(content), err
-	}
-	defer client.Close()
+	var lastErr error
 
-	modelName := os.Getenv("GEMINI_MODEL")
-	if modelName == "" {
-		modelName = "gemini-2.5-flash-lite"
-	}
-	model := client.GenerativeModel(modelName)
-
-	// プロンプトの組み立て
-	prompt := genai.Text(fmt.Sprintf(
-		"以下の技術記事の内容を、エンジニアが30秒で理解できるように3つの箇条書きで要約してください。\n"+
-			"前置き、あいさつ、補足説明は不要です。要約本文だけをそのまま出力してください。\n\n"+
-			"記事本文:\n%s",
-		content,
-	))
-
-	resp, err := model.GenerateContent(ctx, prompt)
-	if err != nil {
-		if isQuotaError(err) {
-			log.Printf("Gemini quota exceeded, using fallback summary: %v", err)
-			return fallbackSummary(content), nil
+	// リトライロジック：quota 制限で最大6回まで再試行（最大約1分待機）
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			// 指数バックオフ：1秒、2秒、4秒、8秒、16秒、32秒
+			waitTime := time.Duration(1<<uint(attempt-1)) * time.Second
+			log.Printf("Gemini quota error, retrying in %v... (attempt %d/6)", waitTime, attempt+1)
+			select {
+			case <-time.After(waitTime):
+				// wait finished
+			case <-ctx.Done():
+				return fallbackSummary(content), ctx.Err()
+			}
 		}
-		return fallbackSummary(content), err
+
+		client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+		if err != nil {
+			return fallbackSummary(content), err
+		}
+		defer client.Close()
+
+		modelName := os.Getenv("GEMINI_MODEL")
+		if modelName == "" {
+			modelName = "gemini-2.5-flash-lite"
+		}
+		model := client.GenerativeModel(modelName)
+
+		// プロンプトの組み立て
+		prompt := genai.Text(fmt.Sprintf(
+			"以下の技術記事の内容を、エンジニアが30秒で理解できるように3つの箇条書きで要約してください。\n"+
+				"前置き、あいさつ、補足説明は不要です。要約本文だけをそのまま出力してください。\n\n"+
+				"記事本文:\n%s",
+			content,
+		))
+
+		resp, err := model.GenerateContent(ctx, prompt)
+		if err != nil {
+			if isQuotaError(err) {
+				lastErr = err
+				if attempt < 5 {
+					// 最後の試行ではない場合は続行してリトライ
+					continue
+				}
+				// 最後の試行でもquota制限の場合はfallbackを使用
+				log.Printf("Gemini quota exceeded after retries (max ~60s), using fallback summary: %v", err)
+				return fallbackSummary(content), nil
+			}
+			return fallbackSummary(content), err
+		}
+
+		// 成功したら結果を返す
+		if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+			return normalizeSummary(fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])), nil
+		}
 	}
 
-	// レスポンスからテキストを抽出
-	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
-		return normalizeSummary(fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])), nil
+	if lastErr != nil {
+		log.Printf("Summarize failed after retries: %v", lastErr)
 	}
-
 	return fallbackSummary(content), nil
 }
 
 func (s *articleService) GenerateTags(ctx context.Context, content string) (*json.RawMessage, error) {
-	client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
-	if err != nil {
-		return fallbackTags(content), err
-	}
-	defer client.Close()
+	var lastErr error
 
-	modelName := os.Getenv("GEMINI_MODEL")
-	if modelName == "" {
-		modelName = "gemini-2.5-flash-lite"
-	}
-	model := client.GenerativeModel(modelName)
-
-	prompt := genai.Text(fmt.Sprintf(
-		"以下の記事本文から、技術タグを3〜5個抽出してください。\n"+
-			"出力はJSON配列のみ（例: [\"Go\",\"RAG\"]）。説明文や前置きは不要です。\n\n"+
-			"記事本文:\n%s",
-		content,
-	))
-
-	resp, err := model.GenerateContent(ctx, prompt)
-	if err != nil {
-		if isQuotaError(err) {
-			log.Printf("Gemini quota exceeded, using fallback tags: %v", err)
-			return fallbackTags(content), nil
+	// リトライロジック：quota 制限で最大6回まで再試行（最大約1分待機）
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			// 指数バックオフ：1秒、2秒、4秒、8秒、16秒、32秒
+			waitTime := time.Duration(1<<uint(attempt-1)) * time.Second
+			log.Printf("Gemini quota error, retrying in %v... (attempt %d/6)", waitTime, attempt+1)
+			select {
+			case <-time.After(waitTime):
+				// wait finished
+			case <-ctx.Done():
+				return fallbackTags(content), ctx.Err()
+			}
 		}
-		return fallbackTags(content), err
-	}
 
-	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
-		generated := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
-		normalized, parseErr := normalizeTags(generated)
-		if parseErr == nil {
-			return normalized, nil
+		client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+		if err != nil {
+			return fallbackTags(content), err
 		}
-		log.Printf("normalizeTags parse error, using fallback tags: %v", parseErr)
+		defer client.Close()
+
+		modelName := os.Getenv("GEMINI_MODEL")
+		if modelName == "" {
+			modelName = "gemini-2.5-flash-lite"
+		}
+		model := client.GenerativeModel(modelName)
+
+		prompt := genai.Text(fmt.Sprintf(
+			"以下の記事本文から、技術タグを3〜5個抽出してください。\n"+
+				"出力はJSON配列のみ（例: [\"Go\",\"RAG\"]）。説明文や前置きは不要です。\n\n"+
+				"記事本文:\n%s",
+			content,
+		))
+
+		resp, err := model.GenerateContent(ctx, prompt)
+		if err != nil {
+			if isQuotaError(err) {
+				lastErr = err
+				if attempt < 5 {
+					// 最後の試行ではない場合は続行してリトライ
+					continue
+				}
+				// 最後の試行でもquota制限の場合はfallbackを使用
+				log.Printf("Gemini quota exceeded after retries (max ~60s), using fallback tags: %v", err)
+				return fallbackTags(content), nil
+			}
+			return fallbackTags(content), err
+		}
+
+		if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+			generated := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+			normalized, parseErr := normalizeTags(generated)
+			if parseErr == nil {
+				return normalized, nil
+			}
+			log.Printf("normalizeTags parse error, using fallback tags: %v", parseErr)
+		}
+
+		return fallbackTags(content), nil
 	}
 
+	if lastErr != nil {
+		log.Printf("GenerateTags failed after retries: %v", lastErr)
+	}
 	return fallbackTags(content), nil
 }
 
