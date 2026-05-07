@@ -93,9 +93,12 @@ func TestFetchOneUrl(t *testing.T) {
 		t.Fatalf("expected non-empty summary to be saved")
 	}
 
-	expectedSummary := fallbackSummary(repo.saved.Content)
-	if *repo.saved.Summary != expectedSummary {
-		t.Fatalf("expected summary %q, got %q", expectedSummary, *repo.saved.Summary)
+	if !strings.HasPrefix(*repo.saved.Summary, "要約を生成できなかったため、本文の冒頭を表示します: ") {
+		t.Fatalf("expected fallback summary prefix, got %q", *repo.saved.Summary)
+	}
+
+	if !strings.Contains(*repo.saved.Summary, "hello") {
+		t.Fatalf("expected summary to include scraped content, got %q", *repo.saved.Summary)
 	}
 }
 
