@@ -36,19 +36,53 @@ func (m *mockRepo) GetArticleByURL(ctx context.Context, url string) (*model.Arti
 }
 
 func TestFetchOneUrl(t *testing.T) {
-	// httptest で簡易 feed を返すサーバを立てる
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/rss+xml")
-		io.WriteString(w, `<?xml version="1.0"?><rss><channel><title>test</title><item><title>one</title><link>http://example/1</link><pubDate>Mon, 02 Jan 2006 15:04:05 MST</pubDate></item></channel></rss>`)
+	contentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, `<html><body><div class="znc"><p>hello</p><div class="TopicList_item___M3DS">topic</div><div class="embed-block">embed</div><img src="/x.png"/><p>world</p></div></body></html>`)
 	}))
-	defer ts.Close()
+	defer contentServer.Close()
+
+	// httptest で簡易 feed を返すサーバを立てる
+	feedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, `<?xml version="1.0"?><rss><channel><title>test</title><item><title>one</title><link>`+contentServer.URL+`</link><pubDate>Mon, 02 Jan 2006 15:04:05 MST</pubDate></item></channel></rss>`)
+	}))
+	defer feedServer.Close()
 
 	repo := &mockRepo{}
 	svc := NewArticleService(repo)
 
-	err := svc.(*articleService).FetchOneUrl(context.Background(), ts.URL)
+	err := svc.(*articleService).FetchOneUrl(context.Background(), feedServer.URL)
 	if err != nil {
 		t.Fatalf("Failed: %v", err)
+	}
+
+	if repo.saved == nil {
+		t.Fatalf("UpsertArticle was not called")
+	}
+
+	if repo.saved.Title != "one" {
+		t.Fatalf("expected saved title %q, got %q", "one", repo.saved.Title)
+	}
+
+	if repo.saved.URL != contentServer.URL {
+		t.Fatalf("expected saved URL %q, got %q", contentServer.URL, repo.saved.URL)
+	}
+
+	if repo.saved.SourceName != "test" {
+		t.Fatalf("expected saved source %q, got %q", "test", repo.saved.SourceName)
+	}
+
+	if !strings.Contains(repo.saved.Content, "hello") || !strings.Contains(repo.saved.Content, "world") {
+		t.Fatalf("expected scraped content to include article text, got %q", repo.saved.Content)
+	}
+
+	if strings.Contains(repo.saved.Content, "topic") || strings.Contains(repo.saved.Content, "embed") {
+		t.Fatalf("expected filtered scraped content, got %q", repo.saved.Content)
+	}
+
+	if repo.saved.Summary == nil || *repo.saved.Summary == "" {
+		t.Fatalf("expected non-empty summary to be saved")
 	}
 }
 
