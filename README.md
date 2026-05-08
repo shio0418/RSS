@@ -61,11 +61,11 @@ npm run dev
 ## API
 
 - `POST /fetch`  
-	RSS を取得して要約・タグ・埋め込みを生成し、保存後に最新記事一覧を返します。
+  RSS を取得して要約・タグ・埋め込みを生成し、保存後に最新記事一覧を返します。
 - `GET /articles`  
-	最新記事一覧を返します。
+  最新記事一覧を返します。
 - `GET /articles/recommended?id=<article_id>&limit=<n>`  
-	指定記事に近い推薦記事を返します。
+  指定記事に近い推薦記事を返します。
 
 ## Supabase テーブル例
 
