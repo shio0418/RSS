@@ -1,14 +1,14 @@
 package handler
 
 import (
-    "context"
-    "encoding/json"
-    "io"
-    "net/http/httptest"
-    "testing"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http/httptest"
+	"testing"
 
-    "github.com/labstack/echo/v4"
-    "github.com/shio0418/RSS/internal/model"
+	"github.com/labstack/echo/v4"
+	"github.com/shio0418/RSS/internal/model"
 )
 
 // mockService implements the service interface used by the handler
@@ -26,6 +26,10 @@ func (m *mockService) FetchAndSummarize(ctx context.Context, urls []string) erro
 }
 
 func (m *mockService) ListArticles(ctx context.Context, limit int) ([]model.Article, error) {
+    return m.ArticlesToReturn, nil
+}
+
+func (m *mockService) GetRecommendations(ctx context.Context, articleID int64, limit int) ([]model.Article, error) {
     return m.ArticlesToReturn, nil
 }
 
