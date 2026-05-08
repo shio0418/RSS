@@ -29,6 +29,10 @@ func (m *mockService) ListArticles(ctx context.Context, limit int) ([]model.Arti
     return m.ArticlesToReturn, nil
 }
 
+func (m *mockService) GetRecommendations(ctx context.Context, articleID int64, limit int) ([]model.Article, error) {
+    return m.ArticlesToReturn, nil
+}
+
 func TestFetchArticlesHandler(t *testing.T) {
     e := echo.New()
 
