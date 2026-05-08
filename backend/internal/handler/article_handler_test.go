@@ -1,14 +1,14 @@
 package handler
 
 import (
-    "context"
-    "encoding/json"
-    "io"
-    "net/http/httptest"
-    "testing"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http/httptest"
+	"testing"
 
-    "github.com/labstack/echo/v4"
-    "github.com/shio0418/RSS/internal/model"
+	"github.com/labstack/echo/v4"
+	"github.com/shio0418/RSS/internal/model"
 )
 
 // mockService implements the service interface used by the handler
